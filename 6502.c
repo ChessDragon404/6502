@@ -345,6 +345,20 @@ void EOR(Byte Data){
     }
 }
 
+void INC(Byte* Data){
+    (*Data)++;
+    if (*Data == 0){
+        SetZero();
+    } else {
+        ClearZero();
+    }
+    if ((*Data) & 0x80 >> 7){
+        SetNegative();
+    } else {
+        ClearNegative();
+    }
+}
+
 Byte IndirectX (){
     Byte ZeroPageAddr = FetchByte();
     ZeroPageAddr += X;
@@ -449,6 +463,15 @@ void Execute (int cycles) {
             ASL(&Memory[Addr]);
             cycle(7);
         } break;
+        case 0x20: //JSR Absolute
+        {
+            Memory[0x0100 + SP] = (PC - 1) & 0xFF;
+            SP--;
+            Memory[0x0100 + SP] = (PC - 1) >> 8;
+            SP--;
+            PC = FetchWord();
+            cycle(6);
+        }
         case 0x21: //AND Indirect, X
         {
             AND(IndirectX());
@@ -518,6 +541,11 @@ void Execute (int cycles) {
             EOR(FetchByte());
             cycle(2);
         } break;
+        case 0x4C: //JMP Absolute
+        {
+            PC = Absolute();
+            cycle(3);
+        }
         case 0x4D: //EOR Absolute
         {
             EOR(Absolute());
@@ -566,6 +594,13 @@ void Execute (int cycles) {
         {
             ADC(FetchByte());
             cycle(2);
+        } break;
+        case 0x6C: //JMP Indirect
+        {
+            Word InitAddr = FetchWord();
+            Word Addr = Memory[InitAddr] << 8 & Memory[InitAddr + 1];
+            PC = Addr;
+            cycle(5);
         } break;
         case 0x6D: //ADC Absolute
         {
@@ -689,6 +724,21 @@ void Execute (int cycles) {
             DEC(&Memory[FetchByte()]);
             cycle(6);
         } break;
+        case 0xC8: //INY Implied
+        {
+            Y++;
+            if (Y == 0){
+                SetZero();
+            } else {
+                ClearZero();
+            }
+            if (Y & 0x80 >> 7){
+                SetNegative();
+            } else {
+                ClearNegative();
+            }
+            cycle(2);
+        } break;
         case 0xC9: //CMP Immediate
         {
             CMP(FetchByte());
@@ -773,14 +823,48 @@ void Execute (int cycles) {
             CPX(ZeroPage());
             cycle(3);
         } break;
+        case 0xE6: //INC Zero Page
+        {
+            INC(&Memory[ReadByte(FetchByte())]);
+            cycle(5);
+        } break;
+        case 0xE8: //INX Implied
+        {
+            X++;
+            if (X == 0){
+                SetZero();
+            } else {
+                ClearZero();
+            }
+            if (X & 0x80 >> 7){
+                SetNegative();
+            } else {
+                ClearNegative();
+            }
+            cycle(2);
+        } break;
         case 0xEC: //CPX Absolute
         {
             CPX(Absolute());
             cycle(4);
         } break;
+        case 0xEE: //INC Absolute
+        {
+            INC(&Memory[FetchWord()]);
+            cycle(6);
+        } break;
         case 0xF0: //BEQ Relative
         {
             Branch(FetchByte(), CheckZero());
+        } break;
+        case 0xF6: //INC Zero Page, X
+        {
+            INC(&Memory[ReadByte((FetchByte() + X) & 0xFF)]);
+            cycle(6);
+        } break;
+        case 0xFE: //INC Absolute, X
+        {
+            INC(&Memory[FetchWord() + X]);
         } break;
         default:
             break;
