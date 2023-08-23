@@ -210,6 +210,20 @@ void LDA(Byte Data){
     }
 }
 
+void LDX(Byte Data){
+    X = Data;
+    if (X == 0){
+        SetZero();
+    } else {
+        ClearZero();
+    }
+    if ((X & 0b10000000) >> 7){
+        SetNegative();
+    } else {
+        ClearZero();
+    }
+}
+
 void ASL(Byte* Data){
     unsigned int tmp = (*Data << 1);
     if ((tmp & 0b100000000) >> 8){
@@ -655,6 +669,10 @@ void Execute (int cycles) {
             LDA(IndirectX());
             cycle(6);
         } break;
+        case 0xA2: //LDX Immediate
+        {
+            LDX(FetchByte());
+        }
         case 0xA5: //LDA Zero Page
         {
             LDA(ZeroPage());
