@@ -1,14 +1,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-typedef unsigned char Byte;
-typedef unsigned short Word;
+typedef unsigned char Byte; //1 Byte
+typedef unsigned short Word; //2 Bytes
 
-Word PC;
-Byte SP;
-Byte A, X, Y;
-Byte PF; // N V N/A B D I Z C
-Byte Memory[64 * 1024];
+Word PC; // Program Counter
+Byte SP; // Stack Pointer
+Byte X, Y; //Index Register
+Byte A; //Accumulator
+Byte PF; //Program Flags N(-) V(overflow) N/A B(Break) D(decimal) I(disable interrupt) Z(0) C(carry)*/
+Byte Memory[64 * 1024]; //64 KiB of Memory
 Byte PageCrossed = 0;
 
 Byte* FetchByte (){
@@ -108,7 +109,7 @@ void ClearOverflow () {
 }
 
 Byte CheckNegative () {
-    return (PF & 0b10000000) >> 7;
+    return PF >> 7;
 }
 
 void SetNegative () {
@@ -155,6 +156,30 @@ void ADC(Byte Data){
     A == 0 ? SetZero() : ClearZero();
     A >> 7 ? SetNegative() : ClearNegative();
     should_carry ? SetCarry() : ClearCarry();
+}
+
+void SBC(Byte Data){
+    Byte tmp = A + (~Data + 1) + ~(1 - CheckCarry()) + 1;
+    if (CheckDecimalMode()){
+        ((A >> 7 && !(Data >> 7)) && !(tmp >> 7)) || ((!(A >> 7) && Data >> 7)  && tmp >> 7) ? SetOverflow() : ClearOverflow();
+        Byte L = (A & 0xF) - (Data & 0xF) - (1 - CheckCarry());
+        Byte U = (A & 0xF0) - (Data & 0xF0);
+        if (L < 0){
+            L = 10 - L;
+            U--;
+        }
+        U < 0 ? ClearCarry() : SetCarry();
+        A = (U << 4) + L;
+        !A ? SetZero() : ClearZero();
+        A >> 7 ? SetNegative() : ClearNegative();
+        return;
+    }
+    int should_carry = (Word)(A + (~Data + 1) + ~(1 - CheckCarry()) + 1) > 0xFF;
+    ((A >> 7 && !(Data >> 7)) && !(tmp >> 7)) || ((!(A >> 7) && Data >> 7)  && tmp >> 7) ? SetOverflow() : ClearOverflow();
+    A += (~Data + 1) + ~(1 - CheckCarry()) + 1;
+    A ? ClearZero() : SetZero();
+    A >> 7 ? SetNegative() : ClearNegative();
+    !should_carry ? SetCarry() : ClearNegative();
 }
 
 void AND(Byte Data){
@@ -277,7 +302,7 @@ void ROR(Byte *Data){
 }
 
 Byte* IndirectX (){
-    Byte ZeroPageAddr = FetchByte();
+    Byte ZeroPageAddr = *FetchByte();
     ZeroPageAddr += X;
     ZeroPageAddr &= 0xFF;
     Word Addr = ReadWord(ZeroPageAddr);
@@ -285,7 +310,7 @@ Byte* IndirectX (){
 }
 
 Byte* IndirectY (){
-    Byte ZeroAddr = FetchByte();
+    Byte ZeroAddr = *FetchByte();
     Word Addr = ReadWord(ZeroAddr);
     Addr += Y;
     PageCrossed = PC >> 8 != Addr >> 8;
@@ -293,12 +318,12 @@ Byte* IndirectY (){
 }
 
 Byte* ZeroPage (){
-    Byte Addr = FetchByte();
+    Byte Addr = *FetchByte();
     return ReadByte(Addr);
 }
 
 Byte* ZeroPageX (){
-    Byte baseAddr = FetchByte();
+    Byte baseAddr = *FetchByte();
     Byte Addr = (baseAddr + X) & 0xFF;
     return ReadByte(Addr);
 }
@@ -325,12 +350,12 @@ Byte* AbsoluteY (){
 void Execute (int cycles) {
     int numCycles = 0;
     while (numCycles < cycles){
-        Byte Ins = FetchByte();
+        Byte Ins = *FetchByte();
         switch (Ins)
         {
         case 0x00: //BRK
         {
-            Memory[0x0100 + SP--] = (PC & 0xFF00) >> 2;
+            Memory[0x0100 + SP--] = (PC & 0xFF00) >> 8;
             Memory[0x0100 + SP--] = PC & 0x00FF;
             Memory[0x0100 + SP--] = PF;
             PC = Memory[0xFFFE] + (Memory[0xFFFF] << 8);
@@ -444,7 +469,7 @@ void Execute (int cycles) {
         } break;
         case 0x28: //PLP
         {
-            PF = Memory[0x0100 + SP++];
+            PF = Memory[0x0100 + ++SP];
             cycle(4);
         } break;
         case 0x29: //AND Immediate
@@ -491,6 +516,11 @@ void Execute (int cycles) {
             ROL(ZeroPageX());
             cycle(6);
         } break;
+        case 0x38: //SEC
+        {
+            SetCarry();
+            cycle(2);
+        } break;
         case 0x39: //AND Absolute, Y
         {
             AND(*AbsoluteY());
@@ -508,8 +538,8 @@ void Execute (int cycles) {
         } break;
         case 0x40: //RTI
         {
-            PF = Memory[0x0100 + SP++];
-            PC = Memory[0x0100 + SP++] & (Memory[0x0100 + SP++] << 8);
+            PF = Memory[0x0100 + ++SP];
+            PC = Memory[0x0100 + ++SP] + (Memory[0x0100 + ++SP] << 8);
             cycle(6);
         } break;
         case 0x41: //EOR Indirect, X
@@ -598,7 +628,7 @@ void Execute (int cycles) {
         } break;
         case 0x60: //RTS
         {
-            PC = Memory[0x0100 + SP++] | (Memory[0x0100 + SP++] << 8);
+            PC = Memory[0x0100 + ++SP] + (Memory[0x0100 + ++SP] << 8);
             cycle(6);
         } break;
         case 0x61: //ADC Indirect, X
@@ -618,7 +648,7 @@ void Execute (int cycles) {
         } break;
         case 0x68: //PLA
         {
-            A = Memory[0x0100 + SP++];
+            A = Memory[0x0100 + ++SP];
             (A == 0) ? SetZero() : ClearZero();
             (A >> 7) ? SetNegative() : ClearNegative();
             cycle(4);
@@ -636,7 +666,7 @@ void Execute (int cycles) {
         case 0x6C: //JMP Indirect
         {
             Word InitAddr = FetchWord();
-            Word Addr = Memory[InitAddr] << 8 + Memory[InitAddr + 1];
+            Word Addr = (Memory[InitAddr] << 8) + Memory[InitAddr + 1];
             PC = Addr;
             cycle(5);
         } break;
@@ -669,6 +699,11 @@ void Execute (int cycles) {
             ROR(ZeroPageX());
             cycle(6);
         } break;
+        case 0x78: //SEI
+        {
+            SetInterruptDisable();
+            cycle(2);
+        } break;
         case 0x79: //ADC Absolute, Y
         {
             ADC(*AbsoluteY());
@@ -679,24 +714,100 @@ void Execute (int cycles) {
             ADC(*AbsoluteX());
             cycle(4 + PageCrossed);
         } break;
+        case 0x81: //STA Indirect, X
+        {
+            *IndirectX() = A;
+            cycle(6);
+        } break;
+        case 0x84: //STY Zero Page
+        {
+            *ZeroPage() = Y;
+            cycle(3);
+        } break;
+        case 0x85: //STA Zero Page
+        {
+            *ZeroPage() = A;
+            cycle(3);
+        } break;
+        case 0x86: //STX Zero Page
+        {
+            *ZeroPage() = X;
+            cycle(3);
+        } break;
         case 0x88: //DEY Implied
         {
             Y--;
-            if (Y == 0){
-                SetZero();
-            } else {
-                ClearZero();
-            }
-            if (Y & 0x80 >> 7){
-                SetNegative();
-            } else {
-                ClearNegative();
-            }
+            Y == 0 ? SetZero() : ClearZero();
+            Y >> 7 ? SetNegative() : ClearNegative();
             cycle(2);
+        } break;
+        case 0x8A: //TXA
+        {
+            A = X;
+            !A ? SetZero() : ClearZero();
+            A >> 7 ? SetNegative() : ClearZero();
+            cycle(2);
+        } break;
+        case 0x8C: //STY Absolute
+        {
+            *Absolute() = Y;
+            cycle(4);
+        } break;
+        case 0x8D: //STA Absolute
+        {
+            *Absolute() = A;
+            cycle(4);
+        } break;
+        case 0x8E: //STX Absolute
+        {
+            *Absolute() = X;
+            cycle(4);
         } break;
         case 0x90: //BCC Relative
         {
             Branch(*FetchByte(), !CheckCarry());
+        } break;
+        case 0x91: //STA Indirect, Y
+        {
+            *IndirectY() = A;
+            cycle(6);
+        } break;
+        case 0x94: //STY Zero Page, X
+        {
+            *ZeroPageX() = Y;
+            cycle(4);
+        } break;
+        case 0x95: //STA Zero Page, X
+        {
+            *ZeroPageX() = A;
+            cycle(4);
+        } break;
+        case 0x96: //STX Zero Page, Y
+        {
+            Memory[(*FetchByte() + Y & 0xFF)] = X;
+            cycle(4);
+        } break;
+        case 0x98: //TYA
+        {
+            A = Y;
+            !A ? SetZero() : ClearZero();
+            A >> 7 ? SetNegative() : ClearNegative();
+            cycle(2);
+        } break;
+        case 0x99: //STA Absolute, Y
+        {
+            *AbsoluteY() = A;
+            cycle(5);
+        } break;
+        case 0x9A: //TXS
+        {
+            SP = X;
+            cycle(2);
+        } break;
+        case 0x9D: //STA Absolute, X
+        {
+            *AbsoluteX() = A;
+            cycle(5);
         } break;
         case 0xA0: //LDY Immediate
         {
@@ -728,9 +839,23 @@ void Execute (int cycles) {
             LDX(*ZeroPage());
             cycle(3);
         } break;
+        case 0xA8: //TAY
+        {
+            Y = A;
+            !Y ? SetZero() : ClearZero();
+            Y << 7 ? SetNegative() : ClearNegative();
+            cycle(2);
+        } break;
         case 0xA9: //LDA Immediate
         {
             LDA(*FetchByte());
+            cycle(2);
+        } break;
+        case 0xAA: //TAX
+        {
+            X = A;
+            X ? ClearZero() : SetZero();
+            X >> 7 ? SetNegative() : ClearNegative();
             cycle(2);
         } break;
         case 0xAC: //LDY Absolute
@@ -768,7 +893,7 @@ void Execute (int cycles) {
         } break;
         case 0xB6: //LDX Zero Page, Y
         {
-            LDX(ReadByte((*FetchByte() + Y) & 0xFF));
+            LDX(*ReadByte((*FetchByte() + Y) & 0xFF));
             cycle(4);
         } break;
         case 0xB8: //CLV Implied
@@ -780,6 +905,13 @@ void Execute (int cycles) {
         {
             LDA(*AbsoluteY());
             cycle(4 + PageCrossed);
+        } break;
+        case 0xBA: //TSX
+        {
+            X = SP;
+            !X ? SetZero() : ClearZero();
+            X >> 7 ? SetNegative() : ClearNegative();
+            cycle(2);
         } break;
         case 0xBC: //LDY Absolute, X
         {
@@ -916,6 +1048,11 @@ void Execute (int cycles) {
             X >> 7 ? SetNegative() : ClearNegative();
             cycle(2);
         } break;
+        case 0xE9: //SBC Immediate
+        {
+            SBC(*FetchByte());
+            cycle(2);
+        } break;
         case 0xEA: //NOP
         {
             cycle(2);
@@ -939,6 +1076,11 @@ void Execute (int cycles) {
             INC(ZeroPageX());
             cycle(6);
         } break;
+        case 0xF8: //SED
+        {
+            SetDecimalMode();
+            cycle(2);
+        } break;
         case 0xFE: //INC Absolute, X
         {
             INC(AbsoluteX());
@@ -955,7 +1097,7 @@ void printBits(Byte Data){
 }
 
 void printRegisters(){
-    printf("A = %X, X = %X, Y = %X, SP = %X, PC = %X, SF = ", A, X, Y, SP, PC);
+    printf("A = %X, X = %X, Y = %X, SP = %X, PC = %X, PF = ", A, X, Y, SP, PC);
     printBits(PF);
     printf("\n");
 }
@@ -973,8 +1115,15 @@ void printStack(){
 int main(void){
     SetInterruptDisable();
     ClearDecimalMode();
-    PC = ReadWord(0xFFFC);
-    Memory[0x0000] = 0x88;
+    PC = 0;
+    SP = 0xFF;
+    Memory[0x0000] = 0x00;
+    Memory[0xFFFE] = 0x00;
+    Memory[0xFFFF] = 0x02;
+    Memory[0x0200] = 0x40;
+    Execute(1);
+    printStack();
+    printRegisters();
     Execute(1);
     printStack();
     printRegisters();
