@@ -891,8 +891,14 @@ void Execute (int cycles) {
     }
 }
 
+void printBits(Byte Data){
+    printf("%d%d%d%d%d%d%d%d",Data>>7,Data>>6&0b01,Data>>5&1,Data>>4&1,Data>>3&1,Data>>2&1,Data>>1&1,Data&1);
+}
+
 void printRegisters(){
-    printf("A = %X, X = %X, Y = %X, SP = %X, PC = %X, SF = %X\n", A, X, Y, SP, PC, PF);
+    printf("A = %X, X = %X, Y = %X, SP = %X, PC = %X, SF = ", A, X, Y, SP, PC);
+    printBits(SF);
+    printf("\n");
 }
 
 void printStack(){
