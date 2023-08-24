@@ -25,6 +25,8 @@ Byte IRQ; //Interrupt Request
 Byte NMI; //Non Maskable Interrupt
 Byte PageCrossed = 0;
 
+struct timespec timer;
+
 Byte* FetchByte (){
     return &Memory[PC++];
 }
@@ -147,8 +149,9 @@ long timer_end(struct timespec start_time){
 }
 
 void cycle(int cycles){
-    while (cycles-- > 0){
-        nanosleep(&(struct timespec){0 , 10000}, NULL);
+    long ns = timer_end(timer);
+    for (int i = 0; i < (cycles * 600 - ns) / 250; i++){
+        timer_end(timer);
     }
 }
 
@@ -189,9 +192,9 @@ void ADC(Byte* Data){
         return;
     }
     int should_carry = A + *Data + CheckCarry() > 0b11111111;
-    if (((A < 0b10000000) && (*Data < 0b10000000)) && ((A + *Data + CheckCarry) >= 0b10000000)){
+    if (((A < 0x80) && (*Data < 0x80)) && ((A + *Data + CheckCarry() >= 0x80))){
         SetOverflow();
-    } else if (((A >= 0b10000000) && (*Data >= 0b10000000)) && ((Byte)(A + *Data + CheckCarry) < 0b10000000)){
+    } else if (((A >= 0b10000000) && ((*Data) >= 0b10000000)) && ((Byte)(A + (*Data) + CheckCarry() < 0b10000000))){
         SetOverflow();
     } else {
         ClearOverflow();
@@ -385,7 +388,8 @@ void SEC(Byte *Data){
 
 void RTI(Byte *Data){
     PF = Memory[0x0100 + ++SP];
-    PC = Memory[0x0100 + ++SP] + (Memory[0x0100 + ++SP] << 8);
+    PC = Memory[0x0100 + ++SP];
+    PC += (Memory[0x0100 + ++SP] << 8);
 }
 
 void PHA(Byte *Data){
@@ -405,7 +409,8 @@ void CLI(Byte *Data){
 }
 
 void RTS(Byte *Data){
-    PC = Memory[0x0100 + ++SP] + (Memory[0x0100 + ++SP] << 8);
+    PC = Memory[0x0100 + ++SP];
+    PC += (Memory[0x0100 + ++SP] << 8);
 }
 
 void PLA(Byte *Data){
@@ -469,7 +474,7 @@ void TXS(Byte *Data){
 void TAY(Byte *Data){
     Y = A;
     !Y ? SetZero() : ClearZero();
-    Y << 7 ? SetNegative() : ClearNegative();
+    Y >> 7 ? SetNegative() : ClearNegative();
 }
 
 void TAX(Byte *Data){
@@ -583,24 +588,21 @@ Byte* Accumulator (){
 }
 
 Byte* ZeroPageY (){
-    return &Memory[(*FetchByte() + Y & 0xFF)];
+    return &Memory[((*FetchByte() + Y) & 0xFF)];
 }
 
-void Execute (int cycles) {
-    int numCycles = 0;
-    while (numCycles < cycles){
-        if (IRQ && !CheckInterruptDisable()){
-            HandleIRQ();
-        }
-        if (NMI){
-            HandleNMI();
-        }
-        Byte I = *FetchByte();
-        Instruction INS = instructions[I];
-        INS.Ins(INS.Adr);
-        cycle(INS.cycles + (INS.UsePageCrossed ? PageCrossed : 0));
-        numCycles++;
+void Execute () {
+    timer = timer_start();
+    if (IRQ && !CheckInterruptDisable()){
+        HandleIRQ();
     }
+    if (NMI){
+        HandleNMI();
+    }
+    Byte I = *FetchByte();
+    Instruction INS = instructions[I];
+    INS.Ins(INS.Adr());
+    cycle(INS.cycles + (INS.UsePageCrossed ? PageCrossed : 0));
 }
 
 void printBits(Byte Data){
@@ -784,11 +786,23 @@ int main(void){
     ClearDecimalMode();
     PC = 0;
     SP = 0xFF;
-    Memory[0x0000] = 0xEA;
-    struct timespec timer = timer_start();
-    Execute(1);
-    long nsec = timer_end(timer);
-    printStack();
+    Memory[0x0000] = 0xB5;
+    Memory[0x0001] = 0x69;
+    Memory[0x0069] = 0x42;
+    long ns[100000];
+    struct timespec t;
+    timer = timer_start();
+    for (int i = 0; i < 100000; i++){
+        t = timer_start();
+        Execute();
+        ns[i] = timer_end(t);
+        PC = 0;
+    }
+    long sum = 0;
+    for (int i = 0; i < 100000; i++){
+        sum += ns[i];
+    }
+    sum /= 100000;
+    printf("%ld\n", sum);
     printRegisters();
-    printf("%ld\n", nsec);
 }
